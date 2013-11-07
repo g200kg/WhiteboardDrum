@@ -1,0 +1,336 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Whiteboard Drum</title>
+<style type="text/css">
+body {
+	background:#88a;
+	color:#000;
+	font-family:'Lucida Grande','Hiragino Kaku Gothic ProN',Meiryo, sans-serif;
+	font-size:13px;
+}
+#header {
+	margin:0px;
+	padding:10px 0px 10px 20px;
+	background:#bbd;
+	border:1px solid #448;
+	overflow:hidden;
+}
+h1 {
+	margin:0px;
+	color:#226;
+	font-size:24px;
+}
+#main {
+	padding:10px 20px;
+}
+#screen {
+	border-radius:10px;
+	margin:20px auto;
+	padding:10px;
+	background:#226;
+	border: 2px solid #008;
+}
+button {
+	border:1px solid #444;
+	background:#eee;
+	background: linear-gradient(to bottom, #232, #eee 10%, #888 90%,#232);
+	background: -moz-linear-gradient(top, #232, #eee 10%, #888 90%,#232);
+	background: -webkit-gradient(linear, left top, left bottom, color-stop(0, #232), color-stop(0.1,#eee),color-stop(0.9,#888),color-stop(1, #232));  
+}
+</style>
+<link rel="import" href="components/controls.html" >
+</head>
+<body onload="Init()">
+<script src="//cdnjs.cloudflare.com/ajax/libs/polymer/0.0.20131025/polymer.min.js"></script>
+<!--<script type="text/javascript">waapisimForceSimWhenNotWebkit=1;</script>-->
+<script type="text/javascript" src="/docs/waapisim/waapisim.js"></script>
+<script type="text/javascript">
+var video=null;
+var cvcapture=null;
+var ctxcapture=null;
+var imgdatcapture=null;
+var ctxdisp=null;
+var imgdatdisp=null;
+var audioctx=null;
+var gain=null;
+var play=0;
+var scrwidth=0;
+var scrheight=0;
+var lumthresh=128*50*64;
+var redthresh=0;
+var invert=0;
+var step=0;
+var nexttick=0;
+var buffers = [];
+var req = new XMLHttpRequest();
+var loadidx=0;
+var patterng=[9,0,0,0,1,0,2,4];
+var patternr=[];
+var rhythmpat=[
+	[1,0,0,1],
+	[0,1,0,0],
+	[0,0,1,0],
+	[0,1,0,0],
+	[0,0,0,1],
+	[0,1,0,0],
+	[0,0,1,0],
+	[0,1,2,0],
+];
+var files = [
+    "samples/cy.wav",
+    "samples/hh.wav",
+    "samples/sd.wav",
+    "samples/bd.wav",
+];
+
+function Trigger(instrument,accent,when) {
+	if(accent==0)
+		return;
+    var src=audioctx.createBufferSource();
+    src.buffer=buffers[instrument];
+    if(accent==2)
+        src.connect(gain);
+    else
+        src.connect(audioctx.destination);
+    src.start(when);
+}
+var captureinterval=0.1;
+var playinterval=0.1;
+var deltatick=0;
+var captureintcnt=playintcnt=0;
+function Interval() {
+	if((captureintcnt+=0.02)>=captureinterval) {
+		captureintcnt-=captureinterval;
+		CaptureInterval();
+	}
+	if((playintcnt+=0.02)>=playinterval) {
+		playintcnt-=playinterval;
+		PlayInterval();
+	}
+}
+function PlayInterval() {
+	if(play) {
+//		console.log(nexttick-audioctx.currentTime);
+		while(nexttick-audioctx.currentTime<0.3) {
+			var p=rhythmpat[step];
+			for(var i=0;i<4;++i)
+				Trigger(i,p[i],nexttick);
+			if(++step>=8)
+				step=0;
+			nexttick+=deltatick;
+		}
+		ctxdisp.fillStyle="#000";
+		ctxdisp.fillRect(0,205,400,8);
+		ctxdisp.fillStyle="#4f4";
+		ctxdisp.fillRect(step*50,205,49,8);
+	}
+}
+function CaptureInterval() {
+	Capture();
+	Analyze();
+}
+function Capture() {
+	video=document.getElementById("video");
+	ctxcapture.drawImage(document.getElementById("video"),0,0,400,200);
+	imgdatcapture=ctxcapture.getImageData(0,0,400,200);
+}
+function Analyze() {
+	var pix = imgdatcapture.data;
+	var step;
+	for(var x = 0; x < 8; ++x) {
+		var px = x * 50;
+		if(invert)
+			step=7-x;
+		else
+			step=x;
+		for(var y = 0; y < 4; ++y) {
+			var py = y * 50;
+			var lum = 0;
+			var red = 0;
+			for(var dx = 0; dx < 50; ++dx) {
+				for(var dy = 0; dy < 50; ++dy) {
+					var offset = ((py + dy) * 400 + px + dx)*4;
+					lum += pix[offset]*3 + pix[offset+1]*6 + pix[offset+2];
+					red += (pix[offset]-pix[offset+2]);
+				}
+			}
+			if(lum < lumthresh) {
+				if(red > redthresh)
+					rhythmpat[step][y]=2;
+				else
+					rhythmpat[step][y]=1;
+			}
+			else
+				rhythmpat[step][y]=0;
+		}
+	}
+	makedispimage();
+}
+function makedispimage() {
+	var dpix=imgdatdisp.data;
+	var spix=imgdatcapture.data;
+	for(var x=0;x<400;++x) {
+		var xs=x*4;
+		if(invert)
+			var xd=(399-x)*4;
+		else
+			var xd=xs;
+		if(invert)
+			var rhy=rhythmpat[7-((x/50)|0)];
+		else
+			var rhy=rhythmpat[(x/50)|0];
+		for(var y=0;y<200;++y) {
+			var pat=rhy[(y/50)|0];
+			dpix[xd+1]=spix[xs+1];
+			switch(pat) {
+			case 0:
+				dpix[xd]=dpix[xd+2]=0;
+				break;
+			case 1:
+				dpix[xd]=0;
+				dpix[xd+2]=255;
+				break;
+			case 2:
+				dpix[xd]=255;
+				dpix[xd+2]=0;
+				break;
+			}
+			xd+=1600;
+			xs+=1600;
+		}
+	}
+	ctxdisp.putImageData(imgdatdisp,0,0);
+	ctxdisp.fillStyle="#ffffff";
+	for(var i=0;i<=200;i+=50)
+		ctxdisp.fillRect(0,i,400,1);
+	for(var i=0;i<=400;i+=50)
+		ctxdisp.fillRect(i,0,1,200);
+}
+function Setup() {
+	invert=document.getElementById("invert").checked;
+	var i=parseInt(document.getElementById("lumthresh").value);
+	lumthresh=i*50*50*10;
+	i=parseInt(document.getElementById("redthresh").value);
+	redthresh=i*50*50;
+	i=parseInt(document.getElementById("tempo").value);
+	deltatick=30/i;
+}
+function PlayStart() {
+	if(play)
+		play=0;
+	else {
+		step=0;
+		play=1;
+		nexttick=audioctx.currentTime+0.2;
+	}
+}
+function Resize() {
+	var scr=document.getElementById("screen");
+	var cv=document.getElementById("disp");
+	scrwidth=scr.clientWidth;
+	scrheight=scr.clientHeight;
+	cv.style.width=(scrwidth-20)+"px";
+	cv.style.height=((scrwidth-20)*200/400)+"px";
+}
+function LoadBuffers() {
+    req.open("GET", files[loadidx], true);
+    req.responseType = "arraybuffer";
+    req.onload = function() {
+        if(req.response) {
+            audioctx.decodeAudioData(req.response,function(b){
+                buffers[loadidx]=b;
+                if(++loadidx < files.length)
+                    LoadBuffers();
+            },function(){});
+        }
+        else
+            buffers[loadidx] = audioctx.createBuffer(VBArray(req.responseBody).toArray(), false);
+    };
+    req.send();
+}
+function Init() {
+	var x,y;
+	window.onresize=Resize;
+	audioctx = new (window.AudioContext||window.webkitAudioContext)();
+	if(audioctx==null) {
+		alert("Web Audio API not found.");
+		return;
+	}
+	LoadBuffers();
+	gain=audioctx.createGain();
+	gain.gain.value=4;
+	gain.connect(audioctx.destination);
+
+	video=document.getElementById("video");
+	cvcapture=document.getElementById("capture");
+	ctxcapture=cvcapture.getContext("2d");
+
+	ctxdisp=document.getElementById("disp").getContext("2d");
+	imgdatdisp=ctxdisp.createImageData(400,200);
+
+	for(y=0;y<200;++y) {
+		for(x=0;x<400;++x) {
+			imgdatdisp.data[(y*400+x)*4]=0;
+			imgdatdisp.data[(y*400+x)*4+1]=0;
+			imgdatdisp.data[(y*400+x)*4+2]=0;
+			imgdatdisp.data[(y*400+x)*4+3]=255;
+		}
+	}
+	navigator.getUserMedia=navigator.getUserMedia||navigator.webkitGetUserMedia||navigator.mozGetUserMedia;
+	if(navigator.getUserMedia==null) {
+		alert("getUserMedia() not found.");
+		return;
+	}
+	navigator.getUserMedia({"video":true},
+		function(stream) {
+			video.src= window.URL.createObjectURL(stream);
+			video.play();
+		},
+		function(err) {
+			alert("Camera Error");
+		});
+	setInterval("Interval()",20);
+	Resize();
+	Setup();
+	var knobs = document.getElementsByTagName('webaudio-knob');
+	for (var i = 0; i < knobs.length; i++) {
+		var knob = knobs[i];
+		knob.addEventListener("change",Setup);
+	}
+}
+</script>
+<div id="header">
+  <h1>Whiteboard Drum</h1>
+</div>
+<div id="main">
+  <div id="screen">
+    <canvas id="disp" width=401 height=210></canvas><br/>
+  </div>
+
+  <div style="font-size:9px;text-align:center">
+    <button onclick="PlayStart()" style="float:left;margin:10px;width:80px;height:64px">Play/Stop</button>
+    <div style="float:left;margin:10px">
+	    <webaudio-knob id="lumthresh" sprites="100" src="images/grey_textured_min-max.png" min="0" max="255" value="100"></webaudio-knob><br/>
+	    Luminance Thresh
+	</div>
+    <div style="float:left;margin:10px">
+	    <webaudio-knob id="redthresh" sprites="100" src="images/grey_textured_min-max.png" min="-100" max="100" value="0"></webaudio-knob><br/>
+	    <center>Redness Thresh</center>
+	</div>
+    <div style="float:left;margin:10px">
+	    <webaudio-knob id="tempo" sprites="100" src="images/grey_textured_min-max.png" min="90" max="240" value="140"></webaudio-knob>
+	    <br/>Tempo
+	</div>
+	<div style="float:left;margin:10px">
+	    <input id="invert" type="checkbox" onchange="Setup()"/>Invert Horizontal
+	</div>
+  </div>
+
+</div>
+<video id="video" width=400 height=200 style="display:none"></video><br/>
+<canvas id="capture" width=400 height=200 style="display:none"></canvas>
+</body>
+</html>
